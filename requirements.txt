@@ -1,0 +1,18 @@
+# OpenJev helper/client versions pinned by the model serving guide.
+# vLLM and PyTorch are intentionally omitted because they are already installed.
+openai==3.16.2
+httpx==0.28.1
+transformers==5.17.0
+peft==0.21.0
+
+# Reproduction pipeline.
+numpy>=2.0
+pandas>=2.2
+pyarrow>=17.0
+scipy>=1.14
+matplotlib>=3.9
+tqdm>=4.66
+PyYAML>=6.0
+
+# Validation.
+pytest>=8.3
