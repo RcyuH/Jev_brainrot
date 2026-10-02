@@ -1,0 +1,115 @@
+seed: 20270127
+
+paths:
+  civil_input: data/raw/civil_comments/data/test-00000-of-00001.parquet
+  goemotions_input: data/raw/go_emotions/simplified/test-00000-of-00001.parquet
+  prepared_dir: data/prepared
+  predictions_dir: artifacts/predictions
+  results_dir: results
+
+data:
+  civil_comments:
+    expected_input_rows: 97320
+    label_threshold: 0.5
+    # The public HF parquet contains 348 exact duplicate rows, not the 88 stated
+    # in the draft. Exact-row deduplication is the most defensible rule that does
+    # not use labels selectively. The manifest records the resulting row count.
+    deduplication:
+      mode: exact
+      columns:
+        - text
+        - toxicity
+        - severe_toxicity
+        - obscene
+        - threat
+        - insult
+        - identity_attack
+        - sexual_explicit
+      keep: first
+  goemotions:
+    expected_input_rows: 5427
+
+model:
+  revision: ac97900fd034fdd7e7e536f3d4c21b836cae0750
+  endpoints:
+    - http://127.0.0.1:3000
+    - http://127.0.0.1:3001
+  timeout_seconds: 120
+  max_in_flight_per_endpoint: 32
+  retries: 5
+  prompts:
+    civil_comments:
+      toxicity:
+        type: noul
+        instructions: "Does this comment contain toxic language or behavior?"
+        criteria:
+          "true": "The comment is rude, disrespectful, unreasonable, or likely to make someone leave a discussion."
+          "false": "The comment is not toxic."
+      identity_attack:
+        type: noul
+        instructions: "Does this comment attack or demean a person or group because of their identity?"
+        criteria:
+          "true": "It attacks an identity such as race, religion, gender, sexual orientation, disability, or nationality."
+          "false": "It does not attack a person or group because of identity."
+      obscene:
+        type: noul
+        instructions: "Does this comment contain obscene or strongly profane language?"
+        criteria:
+          "true": "It contains obscene, sexually explicit, or strongly profane language."
+          "false": "It does not contain obscene or strongly profane language."
+      insult:
+        type: noul
+        instructions: "Does this comment insult or personally attack someone?"
+        criteria:
+          "true": "It contains an insult, demeaning characterization, or personal attack."
+          "false": "It does not insult or personally attack someone."
+    goemotions:
+      anger:
+        type: noul
+        instructions: "Does the author of this comment express anger?"
+      disgust:
+        type: noul
+        instructions: "Does the author of this comment express disgust?"
+      fear:
+        type: noul
+        instructions: "Does the author of this comment express fear?"
+      sadness:
+        type: noul
+        instructions: "Does the author of this comment express sadness?"
+
+analysis:
+  n_bins: 10
+  min_per_group_per_bin: 50
+  binning: pooled_quantile
+  bin_quantile_method: linear
+  routing_count: ceil
+  routing_tie_break: example_id_ascending
+  raw_reference: full_sample
+  conditional_weight: routed_count
+  bootstrap_resamples: 2000
+  bootstrap_workers: 0
+  confidence_level: 0.95
+  p_value: two_sided_bootstrap_sign_plus_one
+  fdr: benjamini_hochberg
+  random_control_subsets: 100
+  primary_rates: [0.20, 0.10, 0.05, 0.02]
+  matrix_rates: [0.10, 0.05]
+
+experiments:
+  civil_primary:
+    - [toxicity, identity_attack]
+    - [toxicity, obscene]
+  civil_matrix:
+    - [toxicity, identity_attack]
+    - [toxicity, obscene]
+    - [toxicity, insult]
+    - [insult, identity_attack]
+    - [insult, obscene]
+    - [obscene, identity_attack]
+    - [identity_attack, obscene]
+    - [identity_attack, insult]
+  goemotions:
+    - [anger, disgust]
+    - [anger, fear]
+    - [anger, sadness]
+
