@@ -81,11 +81,15 @@ Prepare datasets:
 jevcal --config configs/reproduce.yaml prepare
 ```
 
-In terminal 1, start one OpenJev replica per B200:
+In terminal 1, start OpenJev on one B200:
 
 ```bash
-scripts/serve_two_b200.sh /transfer/offline_bundle/models/openjev
+scripts/serve_one_b200.sh /transfer/offline_bundle/models/openjev
 ```
+
+The default config uses the single helper endpoint `http://127.0.0.1:3000`.
+`serve_two_b200.sh` remains available for an optional two-replica deployment;
+add port `3001` back to `model.endpoints` when using it.
 
 In terminal 2, run resumable inference and analysis:
 

@@ -34,7 +34,6 @@ model:
   request_model: openjev
   endpoints:
     - http://127.0.0.1:3000
-    - http://127.0.0.1:3001
   timeout_seconds: 120
   max_in_flight_per_endpoint: 32
   retries: 5
