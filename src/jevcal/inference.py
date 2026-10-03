@@ -17,23 +17,33 @@ from .config import config_digest
 from .io import atomic_write_json, atomic_write_parquet, sha256_file
 
 
-async def infer_dataset(dataset: str, config: dict[str, Any]) -> dict[str, Any]:
+async def infer_dataset(
+    dataset: str,
+    config: dict[str, Any],
+    *,
+    run_name: str | None = None,
+    prompt_set: str | None = None,
+    model_profile: str | None = None,
+) -> dict[str, Any]:
     if dataset not in {"civil_comments", "goemotions"}:
         raise ValueError(f"Unknown dataset: {dataset}")
     prepared_path = Path(config["paths"]["prepared_dir"]) / f"{dataset}.parquet"
     output_dir = Path(config["paths"]["predictions_dir"])
+    if run_name:
+        output_dir = output_dir / "runs" / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
     output_path = output_dir / f"{dataset}.parquet"
     checkpoint_path = output_dir / f"{dataset}.jsonl"
     frame = pd.read_parquet(prepared_path)
 
-    model_config = config["model"]
+    model_config = _resolve_model_profile(config["model"], model_profile)
     endpoints = [value.rstrip("/") for value in model_config["endpoints"]]
     if not endpoints:
         raise ValueError("At least one model endpoint is required")
-    prompts = model_config["prompts"][dataset]
+    prompts = _resolve_prompts(model_config, dataset, prompt_set)
+    request_model = str(model_config.get("request_model", "openjev"))
     request_signature = _request_signature(
-        model_config["revision"], prompts, sha256_file(prepared_path)
+        model_config["revision"], prompts, sha256_file(prepared_path), request_model
     )
     completed = _load_checkpoint(checkpoint_path, request_signature)
     pending = [
@@ -49,7 +59,9 @@ async def infer_dataset(dataset: str, config: dict[str, Any]) -> dict[str, Any]:
         asyncio.Semaphore(int(model_config["max_in_flight_per_endpoint"]))
         for _ in endpoints
     ]
-    versions = await _fetch_versions(clients, endpoints)
+    versions = await _fetch_versions(
+        clients, endpoints, required=bool(model_config.get("require_version_endpoint", False))
+    )
     try:
         with checkpoint_path.open("a", encoding="utf-8", buffering=1) as checkpoint:
             progress = tqdm(total=len(pending), desc=f"Infer {dataset}", unit="row")
@@ -70,6 +82,7 @@ async def infer_dataset(dataset: str, config: dict[str, Any]) -> dict[str, Any]:
                             semaphores[endpoint_index],
                             int(model_config["retries"]),
                             request_signature,
+                            request_model,
                         )
                     )
                 results = await asyncio.gather(*tasks)
@@ -113,6 +126,10 @@ async def infer_dataset(dataset: str, config: dict[str, Any]) -> dict[str, Any]:
         "checkpoint": str(checkpoint_path),
         "config_sha256": config_digest(config),
         "model_revision": model_config["revision"],
+        "model_profile": model_profile or "default",
+        "request_model": request_model,
+        "run_name": run_name or "main",
+        "prompt_set": prompt_set or "default",
         "endpoints": endpoints,
         "endpoint_versions": versions,
         "prompts": prompts,
@@ -131,8 +148,9 @@ async def _infer_one(
     semaphore: asyncio.Semaphore,
     retries: int,
     request_signature: str,
+    request_model: str,
 ) -> dict[str, Any]:
-    payload = {"model": "openjev", "state": text, "questions": prompts}
+    payload = {"model": request_model, "state": text, "questions": prompts}
     started = time.perf_counter()
     last_error = "unknown error"
     for attempt in range(retries + 1):
@@ -170,13 +188,18 @@ async def _infer_one(
 
 
 async def _fetch_versions(
-    clients: list[httpx.AsyncClient], endpoints: list[str]
+    clients: list[httpx.AsyncClient], endpoints: list[str], *, required: bool
 ) -> dict[str, Any]:
     versions: dict[str, Any] = {}
     for client, endpoint in zip(clients, endpoints, strict=True):
-        response = await client.get(f"{endpoint}/v1/version")
-        response.raise_for_status()
-        versions[endpoint] = response.json()
+        try:
+            response = await client.get(f"{endpoint}/v1/version")
+            response.raise_for_status()
+            versions[endpoint] = response.json()
+        except (httpx.HTTPError, json.JSONDecodeError) as error:
+            if required:
+                raise
+            versions[endpoint] = {"unavailable": f"{type(error).__name__}: {error}"}
     return versions
 
 
@@ -199,10 +222,50 @@ def _load_checkpoint(path: Path, request_signature: str) -> dict[str, dict[str, 
     return completed
 
 
-def _request_signature(model_revision: str, prompts: dict[str, Any], input_sha256: str) -> str:
+def _request_signature(
+    model_revision: str,
+    prompts: dict[str, Any],
+    input_sha256: str,
+    request_model: str = "openjev",
+) -> str:
     payload = json.dumps(
-        {"model_revision": model_revision, "prompts": prompts, "input_sha256": input_sha256},
+        {
+            "model_revision": model_revision,
+            "request_model": request_model,
+            "prompts": prompts,
+            "input_sha256": input_sha256,
+        },
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def _resolve_model_profile(
+    model_config: dict[str, Any], profile: str | None
+) -> dict[str, Any]:
+    resolved = {key: value for key, value in model_config.items() if key != "profiles"}
+    if profile is None or profile == "default":
+        return resolved
+    profiles = model_config.get("profiles", {})
+    if profile not in profiles:
+        raise ValueError(f"Unknown model profile {profile!r}; available: {sorted(profiles)}")
+    resolved.update(profiles[profile])
+    if str(resolved.get("revision", "")).startswith("PIN_"):
+        raise ValueError(
+            f"Model profile {profile!r} still has a placeholder revision; pin the local snapshot first"
+        )
+    return resolved
+
+
+def _resolve_prompts(
+    model_config: dict[str, Any], dataset: str, prompt_set: str | None
+) -> dict[str, Any]:
+    if prompt_set is None or prompt_set == "default":
+        return model_config["prompts"][dataset]
+    prompt_sets = model_config.get("prompt_sets", {})
+    if prompt_set not in prompt_sets:
+        raise ValueError(f"Unknown prompt set {prompt_set!r}; available: {sorted(prompt_sets)}")
+    if dataset not in prompt_sets[prompt_set]:
+        raise ValueError(f"Prompt set {prompt_set!r} has no prompts for {dataset}")
+    return prompt_sets[prompt_set][dataset]

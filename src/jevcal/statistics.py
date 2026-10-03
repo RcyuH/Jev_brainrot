@@ -52,16 +52,27 @@ def analyze_family(
     alpha = 1.0 - float(analysis["confidence_level"])
     rows: list[dict[str, Any]] = []
     for index, (experiment, point) in enumerate(zip(experiments, observed, strict=True)):
+        conditional_supported = bool(
+            point["supported_bins"] > 0
+            and np.isfinite(point["conditional_signed_error"])
+            and np.isfinite(point["conditional_brier"])
+        )
         row: dict[str, Any] = {
             "edge": f"{experiment.upstream}->{experiment.downstream}",
             "upstream": experiment.upstream,
             "downstream": experiment.downstream,
             "rate": experiment.rate,
+            "conditional_supported": conditional_supported,
             **point,
         }
         for metric in METRICS:
             samples = bootstrap[metric][:, index]
             finite = samples[np.isfinite(samples)]
+            # A bootstrap resample can accidentally have common support even when
+            # the observed comparison does not. Such draws must not manufacture a
+            # confidence interval for an undefined observed estimand.
+            if metric.startswith("conditional_") and not conditional_supported:
+                finite = np.empty(0, dtype=float)
             row[f"{metric}_ci_low"] = (
                 float(np.quantile(finite, alpha / 2)) if len(finite) else np.nan
             )
@@ -69,10 +80,16 @@ def analyze_family(
                 float(np.quantile(finite, 1 - alpha / 2)) if len(finite) else np.nan
             )
             row[f"{metric}_bootstrap_valid"] = len(finite)
-        row["p_signed_error"] = bootstrap_sign_pvalue(
-            bootstrap["conditional_signed_error"][:, index]
+        row["p_signed_error"] = (
+            bootstrap_sign_pvalue(bootstrap["conditional_signed_error"][:, index])
+            if conditional_supported
+            else np.nan
         )
-        row["p_brier"] = bootstrap_sign_pvalue(bootstrap["conditional_brier"][:, index])
+        row["p_brier"] = (
+            bootstrap_sign_pvalue(bootstrap["conditional_brier"][:, index])
+            if conditional_supported
+            else np.nan
+        )
         rows.append(row)
     result = pd.DataFrame(rows)
     # Unsupported planned comparisons stay in the multiplicity family with p=1.
@@ -165,7 +182,9 @@ def _compute_experiment(
     tie_id = arrays["tie_id"][indices]
     routed = top_fraction_mask(upstream, experiment.rate, tie_id)
     signed_error = downstream - labels
-    brier = signed_error**2
+    # Expected Bernoulli Brier loss. This equals (p-y)^2 for binary labels and
+    # remains the proper expected score when y is a soft annotation in [0, 1].
+    brier = downstream**2 - 2.0 * downstream * labels + labels
     raw_signed_error = float(signed_error[routed].mean() - signed_error.mean())
     raw_brier = float(brier[routed].mean() - brier.mean())
     bins = pooled_quantile_bins(

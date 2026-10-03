@@ -31,6 +31,7 @@ data:
 
 model:
   revision: ac97900fd034fdd7e7e536f3d4c21b836cae0750
+  request_model: openjev
   endpoints:
     - http://127.0.0.1:3000
     - http://127.0.0.1:3001
@@ -76,6 +77,58 @@ model:
       sadness:
         type: noul
         instructions: "Does the author of this comment express sadness?"
+  # Prompt variants are deliberately frozen before robustness inference. They
+  # are only required for Civil Comments; the external GoEmotions analysis
+  # continues to use the primary prompts above.
+  prompt_sets:
+    minimal:
+      civil_comments:
+        toxicity:
+          type: noul
+          instructions: "Is this comment toxic?"
+        identity_attack:
+          type: noul
+          instructions: "Does this comment contain an identity attack?"
+        obscene:
+          type: noul
+          instructions: "Is this comment obscene?"
+        insult:
+          type: noul
+          instructions: "Does this comment contain an insult?"
+    dataset_aligned:
+      civil_comments:
+        toxicity:
+          type: noul
+          instructions: "Would this comment be considered toxic by annotators?"
+          criteria:
+            "true": "It is rude, disrespectful, or unreasonable and is likely to make a participant leave the discussion."
+            "false": "It is unlikely to make a participant leave because of rude, disrespectful, or unreasonable language."
+        identity_attack:
+          type: noul
+          instructions: "Does this comment negatively target a person or group because of identity?"
+          criteria:
+            "true": "It attacks or demeans an identity group or a person because of race, religion, gender, sexual orientation, disability, or nationality."
+            "false": "It does not negatively target a person or group because of identity."
+        obscene:
+          type: noul
+          instructions: "Does this comment contain obscene language?"
+          criteria:
+            "true": "It contains obscene, sexually explicit, or strongly profane language."
+            "false": "It does not contain obscene, sexually explicit, or strongly profane language."
+        insult:
+          type: noul
+          instructions: "Does this comment insult, demean, or personally attack someone?"
+          criteria:
+            "true": "It contains an insult, demeaning characterization, or personal attack."
+            "false": "It does not insult, demean, or personally attack someone."
+  # Start the OneJev server separately, pin its local snapshot, and replace the
+  # revision marker before the final run so it appears in the manifest.
+  profiles:
+    onejev:
+      revision: PIN_ONEJEV_COMMIT_SHA_HERE
+      request_model: jev-latest
+      endpoints:
+        - http://127.0.0.1:8000
 
 analysis:
   n_bins: 10
@@ -95,6 +148,33 @@ analysis:
   primary_rates: [0.20, 0.10, 0.05, 0.02]
   matrix_rates: [0.10, 0.05]
 
+robustness:
+  bin_counts: [5, 10, 20]
+  absolute_bins: 10
+  display_rates: [0.10, 0.05]
+  bootstrap_resamples: 2000
+  permutation_resamples: 2000
+  spline_draws: 2000
+  spline_trim_quantile: 0.01
+  spline_ridge: 0.000001
+  prediction_sets:
+    - name: openjev_criteria_rich
+      model: OpenJev-27B
+      prompt_set: criteria_rich
+      path: artifacts/predictions/civil_comments.parquet
+    - name: openjev_minimal
+      model: OpenJev-27B
+      prompt_set: minimal
+      path: artifacts/predictions/runs/openjev_minimal/civil_comments.parquet
+    - name: openjev_dataset_aligned
+      model: OpenJev-27B
+      prompt_set: dataset_aligned
+      path: artifacts/predictions/runs/openjev_dataset_aligned/civil_comments.parquet
+    - name: onejev_criteria_rich
+      model: OneJev-27B
+      prompt_set: criteria_rich
+      path: artifacts/predictions/runs/onejev_criteria_rich/civil_comments.parquet
+
 experiments:
   civil_primary:
     - [toxicity, identity_attack]
@@ -112,4 +192,3 @@ experiments:
     - [anger, disgust]
     - [anger, fear]
     - [anger, sadness]
-

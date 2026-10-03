@@ -93,3 +93,57 @@ def test_small_family_analysis_multiprocessing():
     )
     assert len(result) == 1
     assert draws["raw_brier"].shape == (4, 1)
+
+
+def test_unsupported_observed_comparison_has_no_conditional_ci_or_pvalue():
+    size = 40
+    frame = pd.DataFrame(
+        {
+            "p_up": np.linspace(0.0, 1.0, size),
+            "p_down": np.linspace(0.05, 0.95, size),
+            "y_down": np.zeros(size),
+        }
+    )
+    analysis = {
+        "n_bins": 4,
+        "min_per_group_per_bin": 50,
+        "bin_quantile_method": "linear",
+        "bootstrap_resamples": 5,
+        "bootstrap_workers": 1,
+        "confidence_level": 0.95,
+    }
+    result, _ = analyze_family(
+        frame, [Experiment("up", "down", 0.25)], analysis, seed=11, workers=1
+    )
+    row = result.iloc[0]
+    assert not row["conditional_supported"]
+    assert np.isnan(row["conditional_signed_error_ci_low"])
+    assert row["conditional_signed_error_bootstrap_valid"] == 0
+    assert np.isnan(row["p_signed_error"])
+    assert row["q_signed_error"] == 1.0
+
+
+def test_soft_target_uses_expected_bernoulli_brier():
+    frame = pd.DataFrame(
+        {
+            "p_up": [0.9, 0.8, 0.2, 0.1],
+            "p_down": [0.8, 0.6, 0.4, 0.2],
+            "y_down": [0.75, 0.50, 0.25, 0.10],
+        }
+    )
+    analysis = {
+        "n_bins": 2,
+        "min_per_group_per_bin": 1,
+        "bin_quantile_method": "linear",
+        "bootstrap_resamples": 2,
+        "bootstrap_workers": 1,
+        "confidence_level": 0.95,
+    }
+    result, _ = analyze_family(
+        frame, [Experiment("up", "down", 0.5)], analysis, seed=13, workers=1
+    )
+    p = frame["p_down"].to_numpy()
+    y = frame["y_down"].to_numpy()
+    expected = p**2 - 2 * p * y + y
+    manual = expected[:2].mean() - expected.mean()
+    assert np.isclose(result.loc[0, "raw_brier"], manual)

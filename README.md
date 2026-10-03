@@ -1,10 +1,13 @@
 # Routing-conditional calibration reproduction
 
-This repository reproduces the current draft of *Can We Trust Jev After
-Routing?* before adding robustness analyses. It prepares Civil Comments and
-GoEmotions, obtains four OpenJev probabilities per example, performs the
-score-conditioned audit with paired bootstrap uncertainty, applies BH-FDR,
-runs the random/oracle controls, and renders the paper tables and figures.
+This repository reproduces and stress-tests *Can We Trust Jev After Routing?*.
+It prepares Civil Comments and GoEmotions, obtains typed decision
+probabilities, performs the score-conditioned audit with paired bootstrap
+uncertainty, applies BH-FDR, runs random/oracle controls, and generates all
+paper tables and figures. The robustness pipeline adds absolute calibration,
+bin-count sensitivity, continuous restricted-cubic-spline calibration curves,
+within-bin permutation tests, soft-label analysis, prompt sensitivity, and a
+second-model comparison.
 
 ## Decisions made for underspecified details
 
@@ -25,8 +28,8 @@ every run manifest.
   `2 * (min(n_boot <= 0, n_boot >= 0) + 1) / (B + 1)`, capped at one. With
   2,000 samples its minimum is approximately 0.001, consistent with the
   draft's repeated `q=0.0011` after BH over 16 tests.
-- Unsupported planned GoEmotions cells remain in the 12-test BH family with
-  `p=1`.
+- Unsupported planned GoEmotions cells have no point estimate, CI, or raw
+  p-value and remain in the 12-test BH family with `p=1`.
 - OpenJev uses the model card's online-FP8 vLLM recipe and calibration
   constants.
 
@@ -105,6 +108,114 @@ Outputs are placed in:
 - `results/figures/`: the two main plots;
 - `results/manifest.json`: hashes and the complete analysis protocol.
 
+## Robustness analyses
+
+The main prediction files are reused for every robustness check that does not
+change the model prompt. No GPU is needed for absolute calibration, binning,
+spline, permutation, or soft-label analyses.
+
+### 1. Generate OpenJev prompt variants
+
+Keep the OpenJev server running, then run the two additional frozen prompt
+sets. Each command has its own resumable checkpoint and never overwrites the
+primary predictions.
+
+```bash
+jevcal --config configs/reproduce.yaml infer \
+  --dataset civil_comments \
+  --run-name openjev_minimal \
+  --prompt-set minimal
+
+jevcal --config configs/reproduce.yaml infer \
+  --dataset civil_comments \
+  --run-name openjev_dataset_aligned \
+  --prompt-set dataset_aligned
+```
+
+### 2. Generate OneJev predictions
+
+Download the model and its serving package on an internet-connected machine.
+Both revisions are required so the final run cannot silently track a moving
+branch:
+
+```bash
+scripts/download_onejev_online.sh \
+  /transfer/offline_bundle \
+  ONEJEV_MODEL_COMMIT_SHA \
+  ONEJEV_CODE_COMMIT_SHA
+```
+
+On the offline server, install the generated `qev` wheel if it is not already
+installed. Stop OpenJev first because OneJev's default endpoint uses port 8000.
+
+```bash
+python -m pip install --no-index \
+  --find-links /transfer/offline_bundle/wheels 'qev[torch]'
+
+GPU_ID=0 scripts/serve_onejev_b200.sh \
+  /transfer/offline_bundle/models/onejev-27b
+```
+
+Replace `PIN_ONEJEV_COMMIT_SHA_HERE` under `model.profiles.onejev.revision` in
+`configs/reproduce.yaml` with the downloaded model commit. In another terminal:
+
+```bash
+jevcal --config configs/reproduce.yaml infer \
+  --dataset civil_comments \
+  --run-name onejev_criteria_rich \
+  --model-profile onejev
+```
+
+### 3. Run every statistical robustness check
+
+For a short smoke test:
+
+```bash
+jevcal --config configs/reproduce.yaml robustness --quick
+```
+
+For final paper results, require every configured prompt/model prediction set:
+
+```bash
+jevcal --config configs/reproduce.yaml robustness --strict-prediction-sets
+```
+
+This produces:
+
+- `results/robustness/tables/absolute_calibration.*`: prevalence, mean score,
+  signed error, Brier, ECE, ICI, calibration intercept, and slope for each
+  routed/non-routed group;
+- `binning_sensitivity.*`: 5/10/20-bin estimates with paired-bootstrap CIs;
+- `continuous_spline.*` and `continuous_spline_curves.*`: continuous
+  group-specific calibration curves, integrated shifts, and interaction tests;
+- `within_bin_permutation.*`: matched-score permutation-null p-values;
+- `label_sensitivity.*`: hard labels versus Civil Comments soft annotations;
+- `prediction_set_comparison.*`: prompt/model estimates and CIs;
+- `results/robustness/figures/figure3_*.png` through `figure6_*.png`;
+- `results/publication_tables/*.tex`: ready-to-include LaTeX tables.
+
+The soft-label Brier calculation is the expected Bernoulli score
+`p^2 - 2*p*y + y`; it is not the squared distance `(p-y)^2`.
+
+### 4. Regenerate tables and figures only
+
+After editing plot styles or copying final CSV files, rebuild every figure and
+LaTeX table without inference or resampling:
+
+```bash
+jevcal --config configs/reproduce.yaml report
+```
+
+### Full final sequence
+
+Assuming prepared data and all four prediction sets already exist:
+
+```bash
+jevcal --config configs/reproduce.yaml analyze
+jevcal --config configs/reproduce.yaml robustness --strict-prediction-sets
+jevcal --config configs/reproduce.yaml report
+```
+
 ## Tests
 
 ```bash
@@ -114,4 +225,3 @@ pytest
 The tests cover label preparation, deterministic routing, tied-score binning,
 conditional weighting, bootstrap p-values, and BH correction without requiring
 a GPU or model download.
-

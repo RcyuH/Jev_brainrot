@@ -9,6 +9,7 @@ import pandas as pd
 from .config import config_digest
 from .io import atomic_write_json, sha256_file
 from .plotting import plot_matrix, plot_primary
+from .reporting import generate_publication_tables
 from .statistics import aggregate_controls, analyze_family, build_experiments
 
 
@@ -84,6 +85,7 @@ def run_analysis(config: dict[str, Any], quick: bool = False) -> dict[str, Any]:
     plot_matrix(matrix, matrix_figure)
     outputs["figure1"] = str(primary_figure)
     outputs["figure2"] = str(matrix_figure)
+    outputs.update(generate_publication_tables(config))
 
     manifest = {
         "config_sha256": config_digest(config),
@@ -97,4 +99,3 @@ def run_analysis(config: dict[str, Any], quick: bool = False) -> dict[str, Any]:
     }
     atomic_write_json(manifest, results_dir / "manifest.json")
     return manifest
-
