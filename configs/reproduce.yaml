@@ -124,7 +124,7 @@ model:
   # revision marker before the final run so it appears in the manifest.
   profiles:
     onejev:
-      revision: PIN_ONEJEV_COMMIT_SHA_HERE
+      revision: aec969d68e7e8e8b0df051e065c04304c0cd7163
       request_model: jev-latest
       endpoints:
         - http://127.0.0.1:8000

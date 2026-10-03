@@ -145,8 +145,8 @@ branch:
 ```bash
 scripts/download_onejev_online.sh \
   /transfer/offline_bundle \
-  ONEJEV_MODEL_COMMIT_SHA \
-  ONEJEV_CODE_COMMIT_SHA
+  aec969d68e7e8e8b0df051e065c04304c0cd7163 \
+  81ce62f1597c91e46767d4d02d6ac2e18534fe94
 ```
 
 On the offline server, install the generated `qev` wheel if it is not already
@@ -160,8 +160,8 @@ GPU_ID=0 scripts/serve_onejev_b200.sh \
   /transfer/offline_bundle/models/onejev-27b
 ```
 
-Replace `PIN_ONEJEV_COMMIT_SHA_HERE` under `model.profiles.onejev.revision` in
-`configs/reproduce.yaml` with the downloaded model commit. In another terminal:
+The pinned OneJev model revision is already recorded under
+`model.profiles.onejev.revision` in `configs/reproduce.yaml`. In another terminal:
 
 ```bash
 jevcal --config configs/reproduce.yaml infer \
