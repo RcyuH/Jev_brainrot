@@ -129,6 +129,7 @@ model:
       request_model: jev-latest
       endpoints:
         - http://127.0.0.1:8000
+      max_in_flight_per_endpoint: 8
 
 analysis:
   n_bins: 10
